@@ -63,7 +63,7 @@ public class BaseDockerApiLiveTest extends BaseApiLiveTest<DockerApi> {
       return overrides;
    }
 
-   protected String consumeStream(InputStream stream) {
+   public static String consumeStream(InputStream stream) {
       try {
          return CharStreams.toString(new InputStreamReader(stream, UTF_8));
       } catch (IOException e) {
