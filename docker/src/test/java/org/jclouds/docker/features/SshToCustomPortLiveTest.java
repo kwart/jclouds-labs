@@ -16,30 +16,30 @@
  */
 package org.jclouds.docker.features;
 
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.jclouds.compute.options.TemplateOptions.Builder.runAsRoot;
 import static org.jclouds.docker.compute.config.LoginPortLookupModule.loginPortLookupBinder;
+import static org.jclouds.scriptbuilder.domain.Statements.exec;
 import static org.testng.Assert.assertEquals;
-import static org.testng.Assert.assertTrue;
 
 import java.io.IOException;
 import java.io.InputStream;
-import java.net.URISyntaxException;
-import java.util.Map;
-import java.util.Set;
+import java.io.InputStreamReader;
 
-import org.jclouds.compute.ComputeServiceContext;
+import org.jclouds.compute.RunNodesException;
 import org.jclouds.compute.domain.ExecResponse;
 import org.jclouds.compute.domain.NodeMetadata;
+import org.jclouds.compute.domain.Template;
 import org.jclouds.compute.internal.BaseComputeServiceContextLiveTest;
 import org.jclouds.docker.DockerApi;
 import org.jclouds.docker.compute.BaseDockerApiLiveTest;
 import org.jclouds.docker.compute.functions.LoginPortForContainer;
 import org.jclouds.docker.compute.options.DockerTemplateOptions;
 import org.jclouds.docker.domain.Container;
-import org.jclouds.docker.domain.Exec;
 import org.jclouds.docker.domain.Image;
 import org.jclouds.docker.options.BuildOptions;
-import org.jclouds.domain.LoginCredentials;
 import org.jclouds.sshj.config.SshjSshClientModule;
+import org.testng.annotations.AfterClass;
 import org.testng.annotations.BeforeClass;
 import org.testng.annotations.Test;
 
@@ -53,9 +53,12 @@ import com.google.inject.multibindings.MapBinder;
 @Test(groups = "live", testName = "SshToImageLiveTest", singleThreaded = true)
 public class SshToCustomPortLiveTest extends BaseComputeServiceContextLiveTest {
 
-   private Container container = null;
-   private Image image = null;
-   private Exec exec = null;
+   private static final int SSH_PORT = 8822;
+   private static final String IMAGE_REPOSITORY = "jclouds/testrepo";
+   private static final String IMAGE_TAG_1 = "testtag";
+   private static final String IMAGE_TAG_2 = "second";
+
+   private Image image;
 
    public SshToCustomPortLiveTest() {
       provider = "docker";
@@ -65,6 +68,24 @@ public class SshToCustomPortLiveTest extends BaseComputeServiceContextLiveTest {
    @BeforeClass(groups = { "integration", "live" })
    public void setupContext() {
       super.setupContext();
+
+      final String tag = toTag(IMAGE_REPOSITORY, IMAGE_TAG_1);
+      BuildOptions options = BuildOptions.Builder.tag(tag).verbose(false).nocache(false);
+      InputStream buildImageStream;
+      try {
+         buildImageStream = api().getMiscApi().build(BaseDockerApiLiveTest.tarredDockerfile(), options);
+         consumeStreamSilently(buildImageStream);
+      } catch (IOException e) {
+         e.printStackTrace();
+      }
+      image = api().getImageApi().inspectImage(tag);
+      api().getImageApi().tagImage(image.id(), IMAGE_REPOSITORY, IMAGE_TAG_2, true);
+   }
+
+   @AfterClass
+   protected void tearDown() {
+      consumeStreamSilently(api().getImageApi().deleteImage(toTag(IMAGE_REPOSITORY, IMAGE_TAG_1)));
+      consumeStreamSilently(api().getImageApi().deleteImage(toTag(IMAGE_REPOSITORY, IMAGE_TAG_2)));
    }
 
    private DockerApi api() {
@@ -76,62 +97,73 @@ public class SshToCustomPortLiveTest extends BaseComputeServiceContextLiveTest {
       return ImmutableSet.<Module> of(getLoggingModule(), new SshjSshClientModule(), new AbstractModule() {
          @Override
          protected void configure() {
-            MapBinder<String, LoginPortForContainer> imageToFunction = loginPortLookupBinder(binder());
-            imageToFunction.addBinding("testBuildImage").toInstance(new LoginPortForContainer() {
+            bind(LoginPortForContainer.class).toInstance(new LoginPortForContainer() {
                @Override
                public Optional<Integer> apply(Container input) {
-                  return Optional.of(8822);
+                  return Optional.of(SSH_PORT);
                }
             });
          }
       });
    }
 
-   @Test
-   public void testBuildAndTagImage() throws IOException, InterruptedException, URISyntaxException {
-      BuildOptions options = BuildOptions.Builder.tag("testBuildTag").verbose(false).nocache(false);
-      InputStream buildImageStream = api().getMiscApi().build(BaseDockerApiLiveTest.tarredDockerfile(), options);
-      BaseDockerApiLiveTest.consumeStream(buildImageStream);
-      image = api().getImageApi().inspectImage("testBuildImage");
-      assertTrue(api().getImageApi().tagImage(image.id(), null, "secondTag", true));
-   }
+   private static void consumeStreamSilently(InputStream is) {
+      char[] tmpBuff = new char[8 * 1024];
+      // throw everything away
+      InputStreamReader isr = new InputStreamReader(is);
 
-   @Test(dependsOnMethods = "testBuildAndTagImage")
-   public void testSsh() {
-      DockerTemplateOptions options = DockerTemplateOptions.Builder.commands("/usr/sbin/dropbear", "-E", "-F", "-p",
-            "8822").overrideLoginUser("root").overrideLoginPassword("screencast").blockOnPort(8822, 30);
-      
-      ComputeServiceContext sshContext = null;
       try {
-
-         NodeMetadata node = Iterables.getOnlyElement(view.getComputeService().createNodesInGroup("ssh-test", 1, options));
-
-         NodeMetadata first = get(nodes, 0);
-         assert first.getCredentials() != null : first;
-         assert first.getCredentials().identity != null : first;
-         // credentials should not be present as the import public key call doesn't have access to
-         // the related private key
-         assert first.getCredentials().credential == null : first;
-
-         AWSRunningInstance instance = getInstance(instanceApi, first.getProviderId());
-
-         assertEquals(instance.getKeyName(), "jclouds#" + group);
-
-         Map<? extends NodeMetadata, ExecResponse> responses = view.getComputeService()
-               .runScriptOnNodesMatching(
-                     runningInGroup(group),
-                     exec("echo hello"),
-                     overrideLoginCredentials(
-                           LoginCredentials.builder().user(first.getCredentials().identity)
-                                 .privateKey(keyPair.get("private")).build()).wrapInInitScript(false).runAsRoot(false));
-
-         ExecResponse hello = getOnlyElement(responses.values());
-         assertEquals(hello.getOutput().trim(), "hello");
-
-      } finally {
-         sshContext.close();
-         view.getComputeService().destroyNodesMatching(inGroup(group));
+         try {
+            while (isr.read(tmpBuff) > -1)
+               ;
+         } finally {
+            isr.close();
+         }
+      } catch (IOException e) {
+         e.printStackTrace();
       }
    }
 
+   private static String toTag(String repo, String tag) {
+      return repo + (tag != null ? ":" + tag : "");
+   }
+
+   @Test
+   public void testSsh() throws RunNodesException {
+
+      final DockerTemplateOptions options = DockerTemplateOptions.Builder
+            .commands("/usr/sbin/dropbear", "-E", "-F", "-p", String.valueOf(SSH_PORT)).overrideLoginUser("root")
+            .overrideLoginPassword("screencast").blockOnPort(SSH_PORT, 30).networkMode("host");
+
+      final Template template = view.getComputeService().templateBuilder().imageId(image.id()).options(options).build();
+
+      String nodeId = null;
+      try {
+
+         NodeMetadata node = Iterables
+               .getOnlyElement(view.getComputeService().createNodesInGroup("ssh-test", 1, template));
+
+         nodeId = node.getId();
+         ExecResponse response = view.getComputeService().runScriptOnNode(nodeId, "echo hello",
+               runAsRoot(false).wrapInInitScript(false));
+         assertThat(response.getOutput().trim()).endsWith("hello");
+      } finally {
+         if (nodeId != null)
+            view.getComputeService().destroyNode(nodeId);
+      }
+   }
+
+   /**
+    * JSON mapping object for progress messages returned in build() method
+    * InputStream.
+    */
+   public static class StreamMessage {
+
+      private String stream;
+
+      @Override
+      public String toString() {
+         return stream;
+      }
+   }
 }
