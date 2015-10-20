@@ -26,9 +26,11 @@ import javax.ws.rs.GET;
 import javax.ws.rs.POST;
 import javax.ws.rs.Path;
 import javax.ws.rs.PathParam;
+import javax.ws.rs.QueryParam;
 import javax.ws.rs.core.MediaType;
 
 import org.jclouds.Fallbacks.EmptyListOnNotFoundOr404;
+import org.jclouds.Fallbacks.FalseOnNotFoundOr404;
 import org.jclouds.Fallbacks.NullOnNotFoundOr404;
 import org.jclouds.docker.domain.Image;
 import org.jclouds.docker.domain.ImageSummary;
@@ -102,4 +104,23 @@ public interface ImageApi {
    @Path("/images/{name}")
    InputStream deleteImage(@PathParam("name") String name, DeleteImageOptions options);
 
+   /**
+    * Tag the image name into a repository.
+    *
+    * @param name
+    *           the name of the image to be tagged
+    * @param repoName
+    *           the repository to tag in
+    * @param tag
+    *           the new tag name
+    * @param force
+    *           force create if tag already exists
+    * @return true if tag is created, false when image is not found.
+    */
+   @Named("image:tag")
+   @POST
+   @Path("/images/{name}/tag")
+   @Fallback(FalseOnNotFoundOr404.class)
+   boolean tagImage(@PathParam("name") String name, @QueryParam("repo") String repoName,
+         @QueryParam("tag") String tag, @QueryParam("force") boolean force);
 }

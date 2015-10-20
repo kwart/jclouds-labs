@@ -17,6 +17,7 @@
 package org.jclouds.docker.features;
 
 import static org.testng.Assert.assertEquals;
+import static org.testng.Assert.assertTrue;
 
 import org.jclouds.docker.DockerApi;
 import org.jclouds.docker.config.DockerParserModule;
@@ -64,6 +65,19 @@ public class ImageApiMockTest extends BaseDockerMockTest {
       try {
          assertEquals(api.listImages(), new ImagesParseTest().expected());
          assertSent(server, "GET", "/images/json");
+      } finally {
+         server.shutdown();
+      }
+   }
+
+   public void testTagImage() throws Exception {
+      MockWebServer server = mockWebServer(new MockResponse().setResponseCode(201));
+      ImageApi api = api(DockerApi.class, server.getUrl("/").toString()).getImageApi();
+      try {
+         assertTrue(api.tagImage("633fcd11259e8d6bccfbb59a4086b95b0d0fb44edfc3912000ef1f70e8a7bfc6", "jclouds",
+               "testTag", true));
+         assertSent(server, "POST",
+               "/images/633fcd11259e8d6bccfbb59a4086b95b0d0fb44edfc3912000ef1f70e8a7bfc6/tag?repo=jclouds&tag=testTag&force=true");
       } finally {
          server.shutdown();
       }
