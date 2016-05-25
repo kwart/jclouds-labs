@@ -26,7 +26,6 @@ import com.google.auto.value.AutoValue;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 
-import org.jclouds.docker.domain.Config.Builder;
 import org.jclouds.javax.annotation.Nullable;
 import org.jclouds.json.SerializedNames;
 
@@ -56,7 +55,7 @@ public abstract class HostConfig {
 
    @Nullable public abstract String networkMode();
 
-   public abstract List<String> securityOpt();
+   @Nullable public abstract List<String> securityOpt();
 
    @Nullable public abstract List<String> capAdd();
 
